@@ -7,3 +7,12 @@
 * Run every Go command that downloads modules (`go mod download`, `go mod tidy`, `go get`…) in CI through `retry_on_corruption` from `.github/workflows/apps/go-retry.sh`, in GitHub and GitLab jobs alike. `cmd/go` never retries, and `GOPROXY=…|direct` doesn't help when checksum verification fails, since it reads `sum.golang.org` directly.
 * Make the failure stop the step: use `pipefail` for `curl | tar`/`curl | jq`, and download scripts to a file instead of `curl | sh`.
 * The merge queue builds every queued commit on a `mq-working-branch-<target>-<hash>` branch before it lands on the target branch. A workflow whose checks gate a pull request must therefore list `mq-working-branch-**` under `on.push.branches`, or a queued commit can land without its checks; a tags-only push filter, or a `branches-ignore` entry covering the whole `mq-working-branch-` prefix (like `mq-working-branch-**`; a single `*` cannot cross `/`), keeps the queue out just as well. An ordered `!` exclusion such as `['**', '!mq-working-branch-**']` also keeps the queue out: GitHub evaluates the entries in order, so a later positive entry re-includes what an earlier `!` entry excluded. A workflow that does not gate a pull request — a tag-only release or publish workflow, a schedule — must not add the queue branch: it would run its jobs for queued commits. Only the queue can exclude a gating lane deliberately: it excludes the OTelc lane (`otelc.yml`). Keep `TestOrchestrionRunsOnTheMergeQueue` and `TestOTelcSkipsTheMergeQueue` in `scripts/ciselect/workflows_test.go` in sync with the workflow files.
+* The `orchestrion.yml` and `otelc.yml` integration lanes run their
+  macOS and Windows legs on main-based events only (push to `main` or
+  `release-v*`, nightly schedule, dispatches, cross-repository calls):
+  pull requests and merge-queue branches run the Ubuntu legs.
+  `ci-lane-triage.yml` turns failures of those main-based legs into
+  deduplicated issues for `@DataDog/apm-go` and keeps the tracking
+  issue's status table current. Keep
+  `TestIntegrationLanesMacWindowsMainOnly` in
+  `scripts/ciselect/workflows_test.go` in sync with the workflow files.

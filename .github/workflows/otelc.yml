@@ -9,6 +9,12 @@ on:
   pull_request:
   push:
     branches:
+      - main
+        # Every merge to main re-runs the macOS and Windows legs after the
+        # fact: pull requests run the ubuntu legs only (see the matrix
+        # below), so a platform-specific breakage is caught on main and
+        # turned into an issue by ci-lane-triage.yml instead of gating
+        # the pull request.
       - release-v*
       # Not on mq-working-branch-**: the merge queue deliberately skips this
       # lane (see .github/AGENTS.md).
@@ -191,10 +197,15 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runs-on:
-          - ubuntu
-          - macos
-          - windows
+        # Pull requests and merge-queue branches run the ubuntu legs only:
+        # the macOS and Windows legs run on main-based events (push to
+        # main or release-v*, nightly schedule, and dispatches), where
+        # ci-lane-triage.yml turns their failures into issues instead of
+        # gating the pull request.
+        runs-on: ${{ fromJSON(
+          (github.event_name == 'pull_request' ||
+           startsWith(github.ref, 'refs/heads/mq-working-branch-')) &&
+          '["ubuntu"]' || '["ubuntu", "macos", "windows"]') }}
         go-version: ${{ fromJSON(needs.go-versions-matrix.outputs.json) }}
     name: Integration Test (${{ matrix.runs-on }} | ${{ matrix.go-version }})
     runs-on: ${{ matrix.runs-on == 'ubuntu' && fromJson('{"labels":"ubuntu-8-core-latest","group":"Large Runner Shared Public"}') || (matrix.runs-on == 'windows' && fromJson('{"labels":"windows-shared-8core","group":"LARGE WINDOWS SHARED"}')) || format('{0}-latest', matrix.runs-on) }}

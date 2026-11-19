@@ -11,14 +11,19 @@ on:
         type: boolean
         default: false
         required: false
-  workflow_dispatch: # On-demand runs; the `push` trigger below only covers release-v* branches,
-                     # so `main` is otherwise only exercised by the nightly schedule.
+  workflow_dispatch: # On-demand runs; a deliberate full-matrix run.
   pull_request:
   push:
     branches:
+      - main
+        # Every merge to main re-runs the macOS and Windows legs after
+        # the fact: pull requests and merge-queue branches run the ubuntu
+        # legs only (see the matrix below), so a platform-specific
+        # breakage is caught on main and turned into an issue by
+        # ci-lane-triage.yml instead of gating the pull request.
       - release-v*
       # The merge queue is not gated (see CONTRIBUTING.md), so a queued
-      # commit runs the full lane before landing on main.
+      # commit runs the ubuntu legs of the lane before landing on main.
       - mq-working-branch-**
     tags-ignore:
       - 'contrib/**'
@@ -167,10 +172,20 @@ jobs:
     strategy:
       fail-fast: false
       matrix:
-        runs-on:
-          - ubuntu
-          - macos
-          - windows
+        # Pull requests and merge-queue branches run the ubuntu legs
+        # only: the macOS and Windows legs run on main-based events
+        # (push to main or release-v*, nightly schedule, dispatches),
+        # where ci-lane-triage.yml turns their failures into issues
+        # instead of gating the pull request.
+        # In a called workflow the github context belongs to the caller,
+        # so a pull request in DataDog/orchestrion would narrow this
+        # repository's matrix to ubuntu: a cross-repository call
+        # (orchestrion-version set) always runs the full matrix.
+        runs-on: ${{ fromJSON(
+          (inputs.orchestrion-version == '' &&
+           (github.event_name == 'pull_request' ||
+            startsWith(github.ref, 'refs/heads/mq-working-branch-'))) &&
+          '["ubuntu"]' || '["ubuntu", "macos", "windows"]') }}
         go-version: ${{ fromJSON(needs.go-versions-matrix.outputs.json) }}
         mode: [DRIVER]
         include:

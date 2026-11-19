@@ -1534,3 +1534,79 @@ func TestBranchListRunsQueueBranch(t *testing.T) {
 		}
 	}
 }
+
+// mainOnlyOSMatrix is the matrix expression the integration lanes use to
+// keep their macOS and Windows legs off pull requests and the merge queue:
+// those events run the ubuntu legs only, and the macOS and Windows legs
+// catch platform-specific breakage on main-based runs instead (triaged by
+// ci-lane-triage.yml). The literal is pinned whole because the gating
+// semantics live in the condition, not just the leg lists.
+// mainOnlyOSMatrix is the matrix expression the orchestrion lane uses
+// to keep its macOS and Windows legs off pull requests and the merge
+// queue: those events run the ubuntu legs only, and the macOS and
+// Windows legs catch platform-specific breakage on main-based runs
+// instead (triaged by ci-lane-triage.yml). In a called workflow the
+// github context belongs to the caller, so a pull request in
+// DataDog/orchestrion must not narrow this repository's matrix: the
+// narrowing requires orchestrion-version unset, which only happens for
+// this repository's own events. The literal is pinned whole because
+// the gating semantics live in the conditions, not just the leg lists.
+const mainOnlyOSMatrix = "${{ fromJSON(" +
+	"  (inputs.orchestrion-version == '' &&" +
+	"   (github.event_name == 'pull_request' ||" +
+	"    startsWith(github.ref, 'refs/heads/mq-working-branch-'))) &&" +
+	"  '[\"ubuntu\"]' || '[\"ubuntu\", \"macos\", \"windows\"]') }}"
+
+// normalizeExpr collapses the whitespace of a matrix expression so the
+// pin compares content, not the source's line wrapping (the YAML decoder
+// already folds the literal the same way).
+func normalizeExpr(s string) string {
+	return strings.Join(strings.Fields(s), " ")
+}
+
+// TestIntegrationLanesMacWindowsMainOnly pins the lane policy of
+// .github/AGENTS.md: the orchestrion and otelc integration lanes run their
+// macOS and Windows legs on main-based events only, and every push to main
+// triggers both lanes so a merge lands with a follow-up run.
+func TestIntegrationLanesMacWindowsMainOnly(t *testing.T) {
+	_, _, root := testTable(t)
+	for _, name := range []string{"orchestrion.yml", "otelc.yml"} {
+		t.Run(name, func(t *testing.T) {
+			doc, on := parseWorkflow(t, filepath.Join(root, workflowDir, name))
+
+			push, _ := on["push"].(map[string]any)
+			if push == nil {
+				t.Fatalf("%s: no push trigger", name)
+			}
+			branches, _ := push["branches"].([]any)
+			if !slices.ContainsFunc(branches, func(b any) bool { return b == "main" }) {
+				t.Errorf("%s: push.branches misses main, so merges stop "+
+					"re-running the macOS/Windows legs", name)
+			}
+
+			job, _ := doc["jobs"].(map[string]any)["integration-test"].(map[string]any)
+			if job == nil {
+				t.Fatalf("%s: no integration-test job", name)
+			}
+			strategy, _ := job["strategy"].(map[string]any)
+			matrix, _ := strategy["matrix"].(map[string]any)
+			got, _ := matrix["runs-on"].(string)
+			if name == "orchestrion.yml" {
+				if normalizeExpr(got) != normalizeExpr(mainOnlyOSMatrix) {
+					t.Errorf("%s: matrix.runs-on = %q,\nwant the main-only OS matrix:\n%q",
+						name, got, mainOnlyOSMatrix)
+				}
+			} else {
+				// otelc.yml has no workflow_call trigger, so its expression
+				// omits the caller-context guard.
+				n := normalizeExpr(got)
+				if !strings.Contains(n, "github.event_name == 'pull_request'") ||
+					!strings.Contains(n, "mq-working-branch-") ||
+					!strings.Contains(n, `'["ubuntu"]'`) {
+					t.Errorf("%s: matrix.runs-on = %q lost the PR/queue ubuntu narrowing",
+						name, got)
+				}
+			}
+		})
+	}
+}
