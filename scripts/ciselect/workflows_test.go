@@ -1610,3 +1610,46 @@ func TestIntegrationLanesMacWindowsMainOnly(t *testing.T) {
 		})
 	}
 }
+
+// TestOTelcMacUsesLargeRunner pins the larger macOS runner of the otelc
+// lane: its macOS legs run only on main-based events, where a 3-vCPU
+// runner stretches a 32-minute median (p90 66) into the worst job of the
+// repository. The 12-core Intel runner is x64, so arm64 macOS coverage
+// must stay somewhere: the orchestrion lane and the AppSec macOS matrix
+// keep the standard arm64 runners, which this test also asserts.
+func TestOTelcMacUsesLargeRunner(t *testing.T) {
+	_, _, root := testTable(t)
+	doc, _ := parseWorkflow(t, filepath.Join(root, workflowDir, "otelc.yml"))
+	job := doc["jobs"].(map[string]any)["integration-test"].(map[string]any)
+	expr, _ := job["runs-on"].(string)
+	expr = normalizeExpr(expr)
+	for _, want := range []string{
+		`"labels":"macos-shared-12core", "group":"LARGE MACOS SHARED"`,
+	} {
+		if !strings.Contains(expr, want) {
+			t.Errorf("otelc.yml integration-test runs-on misses %q:\n%s", want, expr)
+		}
+	}
+	if !strings.Contains(expr, `format('{0}-latest', matrix.runs-on)`) {
+		t.Errorf("otelc.yml integration-test runs-on lost the "+
+			"standard-runner fallback:\n%s", expr)
+	}
+
+	// The macOS legs of the orchestrion lane keep the standard arm64
+	// runners: they are cheap (about 10 minutes) and they are the only
+	// arm64 macOS coverage left once the otelc legs move to the x64
+	// larger runner.
+	orchDoc, _ := parseWorkflow(t,
+		filepath.Join(root, workflowDir, "orchestrion.yml"))
+	orchJobs, _ := orchDoc["jobs"].(map[string]any)
+	orchJob, _ := orchJobs["integration-test"].(map[string]any)
+	orchExpr, _ := orchJob["runs-on"].(string)
+	if strings.Contains(orchExpr, "macos-shared-12core") {
+		t.Errorf("orchestrion.yml moved its macOS legs to the larger x64 runner; " +
+			"arm64 macOS coverage must stay on the standard runners")
+	}
+	if !strings.Contains(orchExpr, `format('{0}-latest', matrix.runs-on)`) {
+		t.Errorf("orchestrion.yml integration-test runs-on lost the "+
+			"standard-runner fallback:\n%s", orchExpr)
+	}
+}
